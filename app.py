@@ -61,5 +61,26 @@ def test_db():
     except Exception as e:
         return f"Помилка при роботі з БД: {str(e)}"
 
+@app.route('/view-data')
+def view_data():
+
+    all_records = Analysis.query.all()
+    
+    html_response = "<h1>Історія діагностики</h1><ul>"
+    
+    for record in all_records:
+        html_response += f"""
+            <li>
+                <strong>ID:</strong> {record.id}<br>
+                <strong>Користувач:</strong> {record.author.username} ({record.author.email})<br>
+                <strong>Файл:</strong> {record.image_name}<br>
+                <strong>Результат:</strong> {record.prediction} (Впевненість: {record.confidence})<br>
+                <strong>Дата:</strong> {record.timestamp}
+                <hr>
+            </li>
+        """
+    html_response += "</ul>"
+    return html_response
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
