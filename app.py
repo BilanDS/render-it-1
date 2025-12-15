@@ -1,12 +1,10 @@
 import os
 import numpy as np
-import gc
 from flask import Flask, request, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image as keras_image
 from PIL import Image
+import tflite_runtime.interpreter as tflite
 
 app = Flask(__name__)
 
@@ -16,30 +14,35 @@ if database_url and database_url.startswith("postgres://"):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 db = SQLAlchemy(app)
 
-model_path = 'final_skin_model.h5'
-model = None
+model_path = 'skin_model.tflite'
+interpreter = None
+input_details = None
+output_details = None
 
 try:
     if os.path.exists(model_path):
-        model = load_model(model_path)
-        print("Model loaded successfully")
+        interpreter = tflite.Interpreter(model_path=model_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        print("Model loaded")
     else:
         print("Model file not found")
 except Exception as e:
-    print(f"Error loading model: {e}")
+    print(f"Error: {e}")
 
 CLASSES = {
-    0: 'AKIEC - Actinic keratoses',
-    1: 'BCC - Basal cell carcinoma',
-    2: 'BKL - Benign keratosis',
-    3: 'DF - Dermatofibroma',
-    4: 'MEL - Melanoma',
-    5: 'NV - Melanocytic nevi',
-    6: 'VASC - Vascular lesions'
+    0: 'AKIEC - Актинічний кератоз',
+    1: 'BCC - Базаліома',
+    2: 'BKL - Доброякісний кератоз',
+    3: 'DF - Дерматофіброма',
+    4: 'MEL - Меланома',
+    5: 'NV - Невус (Родимка)',
+    6: 'VASC - Судинні ураження'
 }
 
 class User(db.Model):
@@ -87,7 +90,7 @@ HOME_HTML = '''
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI Derma Lab</title>
+    <title>AI Дерматологія</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; background: #f9f9f9; }
@@ -102,31 +105,31 @@ HOME_HTML = '''
 </head>
 <body>
     <div class="container">
-        <h1 style="text-align: center;">Skin Diagnosis</h1>
+        <h1 style="text-align: center;">Діагностика шкіри</h1>
         <form action="/analyze" method="post" enctype="multipart/form-data">
             <div class="form-group">
-                <label>Patient Name:</label>
-                <input type="text" name="username" required placeholder="Name">
+                <label>Ім'я пацієнта:</label>
+                <input type="text" name="username" required placeholder="Введіть ім'я">
             </div>
             <div class="form-group">
-                <label>Location:</label>
+                <label>Локалізація:</label>
                 <select name="body_part">
-                    <option value="Face">Face</option>
-                    <option value="Arm">Arm</option>
-                    <option value="Back">Back</option>
-                    <option value="Leg">Leg</option>
-                    <option value="Other">Other</option>
+                    <option value="Обличчя">Обличчя</option>
+                    <option value="Рука">Рука</option>
+                    <option value="Спина">Спина</option>
+                    <option value="Нога">Нога</option>
+                    <option value="Інше">Інше</option>
                 </select>
             </div>
             <div class="form-group">
-                <label>Photo (Max 5MB):</label>
+                <label>Фото:</label>
                 <input type="file" name="file" accept="image/*" required>
             </div>
-            <button type="submit">Analyze</button>
+            <button type="submit">Аналізувати</button>
         </form>
         <div class="link">
-            <a href="/view-data">View History</a> | 
-            <a href="/reset-db" style="color: red; font-size: 0.8em;">Reset DB</a>
+            <a href="/view-data">Історія аналізів</a> | 
+            <a href="/reset-db" style="color: red; font-size: 0.8em;">Оновити БД</a>
         </div>
     </div>
 </body>
@@ -139,35 +142,33 @@ def home():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    gc.collect()
-    
-    if model is None:
-        return "<h3>Error: Model not loaded.</h3>"
+    if interpreter is None:
+        return "<h3>Помилка: Модель не завантажена.</h3>"
 
     username = request.form.get('username')
     body_part_name = request.form.get('body_part')
     file = request.files['file']
 
     if file.filename == '':
-        return "No file selected"
+        return "Файл не обрано"
 
     try:
         img = Image.open(file.stream).convert("RGB")
         img = img.resize((224, 224))
         
-        x = keras_image.img_to_array(img)
+        x = np.array(img, dtype=np.float32)
         x = np.expand_dims(x, axis=0)
         x = x / 255.0
 
-        preds = model.predict(x)
+        interpreter.set_tensor(input_details[0]['index'], x)
+        interpreter.invoke()
+        preds = interpreter.get_tensor(output_details[0]['index'])
+
         idx = np.argmax(preds[0])
         confidence = float(np.max(preds[0]) * 100)
         
         full_text = CLASSES[idx]
         short_name = full_text.split(' - ')[0]
-
-        del img, x, preds
-        gc.collect()
 
         user = User.query.filter_by(username=username).first()
         if not user:
@@ -201,19 +202,19 @@ def analyze():
 
         return f'''
         <div style="font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px;">
-            <h1 style="color: {color};">Result: {full_text}</h1>
-            <p><strong>Confidence:</strong> {confidence:.2f}%</p>
-            <p><strong>Patient:</strong> {username}</p>
+            <h1 style="color: {color};">Результат: {full_text}</h1>
+            <p><strong>Впевненість:</strong> {confidence:.2f}%</p>
+            <p><strong>Пацієнт:</strong> {username}</p>
             <hr>
-            <h3>Recommendations:</h3>
+            <h3>Рекомендації:</h3>
             <ul>{recs_html}</ul>
             <br>
-            <a href="/" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">Back</a>
+            <a href="/" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">Назад</a>
         </div>
         '''
 
     except Exception as e:
-        return f"Error processing image: {str(e)}"
+        return f"Помилка обробки: {str(e)}"
 
 @app.route('/view-data')
 def view_data():
@@ -226,8 +227,8 @@ def view_data():
         .danger { color: red; font-weight: bold; }
         .safe { color: green; font-weight: bold; }
     </style>
-    <h1>Diagnosis History</h1>
-    <a href="/">Back to Home</a><br><br>
+    <h1>Історія діагностики</h1>
+    <a href="/">На головну</a><br><br>
     '''
     
     for a in analyses:
@@ -236,21 +237,21 @@ def view_data():
             severity_color = "danger" if a.disease.severity > 5 else "safe"
             recs = "".join([f"<li>{r.text}</li>" for r in a.disease.recommendations])
         else:
-            d_name = "Unknown"
+            d_name = "Невідомо"
             severity_color = "black"
-            recs = "<li>No data</li>"
+            recs = "<li>Немає даних</li>"
 
         html += f'''
         <div class="card">
-            <h3>Image: {a.image_name}</h3>
-            <p><strong>Patient:</strong> {a.patient.username}</p>
-            <p><strong>Location:</strong> {a.location.name if a.location else 'Not specified'}</p>
+            <h3>Зображення: {a.image_name}</h3>
+            <p><strong>Пацієнт:</strong> {a.patient.username}</p>
+            <p><strong>Локалізація:</strong> {a.location.name if a.location else 'Не вказано'}</p>
             <hr>
-            <p><strong>Result:</strong> <span class="{severity_color}">{d_name}</span></p>
-            <p><strong>Confidence:</strong> {a.confidence:.2f}%</p>
-            <p><strong>Recommendations:</strong></p>
+            <p><strong>Результат:</strong> <span class="{severity_color}">{d_name}</span></p>
+            <p><strong>Впевненість:</strong> {a.confidence:.2f}%</p>
+            <p><strong>Рекомендації:</strong></p>
             <ul>{recs}</ul>
-            <small>Date: {a.timestamp.strftime('%Y-%m-%d %H:%M')}</small>
+            <small>Дата: {a.timestamp.strftime('%Y-%m-%d %H:%M')}</small>
         </div>
         '''
     
@@ -262,7 +263,7 @@ def reset_db():
         db.drop_all()
         db.create_all()
 
-        parts = ["Face", "Arm", "Back", "Leg", "Other"]
+        parts = ["Обличчя", "Рука", "Спина", "Нога", "Інше"]
         for p in parts:
             db.session.add(BodyPart(name=p))
         
@@ -271,10 +272,10 @@ def reset_db():
             
             if short in ['MEL', 'BCC', 'AKIEC', 'VASC']:
                 sev = 10
-                rec_text = "Urgent consultation required!"
+                rec_text = "Термінова консультація лікаря!"
             else:
                 sev = 1
-                rec_text = "Benign. Observe for changes."
+                rec_text = "Доброякісне. Спостерігайте за змінами."
 
             d = DiseaseInfo(name=short, description=text, severity=sev)
             db.session.add(d)
@@ -283,9 +284,9 @@ def reset_db():
             db.session.add(rec)
 
         db.session.commit()
-        return "Database reset and seeded successfully."
+        return "База даних успішно оновлена."
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Помилка: {str(e)}"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
