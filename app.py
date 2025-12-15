@@ -82,5 +82,16 @@ def view_data():
     html_response += "</ul>"
     return html_response
 
+@app.route('/reset-db')
+def reset_db():
+    try:
+        db.drop_all()
+        
+        db.create_all()
+        
+        return "Базу даних очищено! Таблиці видалено і створено наново."
+    except Exception as e:
+        return f"Сталася помилка: {str(e)}"
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
