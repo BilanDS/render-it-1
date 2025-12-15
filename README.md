@@ -1,4 +1,4 @@
-# 🩺 AI Derma Lab: Інтелектуальна система діагностики шкіри
+# AI Derma Lab: Інтелектуальна система діагностики шкіри
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![Flask](https://img.shields.io/badge/Flask-3.0-green.svg)
