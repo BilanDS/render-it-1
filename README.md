@@ -5,7 +5,7 @@
 ![TensorFlow](https://img.shields.io/badge/TensorFlow-Lite-orange.svg)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-blue)
 ![Render](https://img.shields.io/badge/Deployment-Render-purple)
-![CI Status](https://github.com/ВАШ_НІК/ВАШ_РЕПОЗИТОРІЙ/actions/workflows/ci_test.yml/badge.svg)
+![CI Status](https://github.com/BilanDS/render-it-1/actions/workflows/ci_test.yml/badge.svg)
 
 Веб-застосунок для автоматизованої діагностики дерматологічних захворювань за допомогою згорткової нейронної мережі (CNN). Система дозволяє користувачам завантажувати зображення уражень шкіри та отримувати миттєву класифікацію ризиків із рекомендаціями.
 
