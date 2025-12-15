@@ -1,6 +1,7 @@
 import os
 import numpy as np
-from flask import Flask, request, render_template_string
+import io
+from flask import Flask, request, render_template_string, send_file
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from PIL import Image
@@ -33,7 +34,7 @@ try:
     else:
         print("Model file not found")
 except Exception as e:
-    print(f"Error: {e}")
+    print(f"Error loading TFLite: {e}")
 
 CLASSES = {
     0: 'AKIEC - Актинічний кератоз',
@@ -77,6 +78,7 @@ class Analysis(db.Model):
     __tablename__ = 'analyses'
     id = db.Column(db.Integer, primary_key=True)
     image_name = db.Column(db.String(100), nullable=False)
+    image_data = db.Column(db.LargeBinary, nullable=True)
     confidence = db.Column(db.Float, nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
@@ -101,6 +103,7 @@ HOME_HTML = '''
         button { background: #28a745; color: white; border: none; cursor: pointer; font-size: 16px; }
         button:hover { background: #218838; }
         .link { display: block; text-align: center; margin-top: 15px; }
+        #imagePreview { display: none; max-width: 100%; height: auto; margin-top: 10px; border-radius: 8px; border: 2px solid #ddd; }
     </style>
 </head>
 <body>
@@ -123,7 +126,8 @@ HOME_HTML = '''
             </div>
             <div class="form-group">
                 <label>Фото:</label>
-                <input type="file" name="file" accept="image/*" required>
+                <input type="file" name="file" accept="image/*" required id="imageInput" onchange="previewImage(event)">
+                <img id="imagePreview" src="#" alt="Попередній перегляд" />
             </div>
             <button type="submit">Аналізувати</button>
         </form>
@@ -132,6 +136,17 @@ HOME_HTML = '''
             <a href="/reset-db" style="color: red; font-size: 0.8em;">Оновити БД</a>
         </div>
     </div>
+    <script>
+        function previewImage(event) {
+            var reader = new FileReader();
+            reader.onload = function(){
+                var output = document.getElementById('imagePreview');
+                output.src = reader.result;
+                output.style.display = 'block';
+            }
+            reader.readAsDataURL(event.target.files[0]);
+        }
+    </script>
 </body>
 </html>
 '''
@@ -153,10 +168,10 @@ def analyze():
         return "Файл не обрано"
 
     try:
-        img = Image.open(file.stream).convert("RGB")
-        img = img.resize((224, 224))
+        img_orig = Image.open(file.stream).convert("RGB")
+        img_resized = img_orig.resize((224, 224))
         
-        x = np.array(img, dtype=np.float32)
+        x = np.array(img_resized, dtype=np.float32)
         x = np.expand_dims(x, axis=0)
         x = x / 255.0
 
@@ -169,6 +184,10 @@ def analyze():
         
         full_text = CLASSES[idx]
         short_name = full_text.split(' - ')[0]
+
+        img_byte_arr = io.BytesIO()
+        img_resized.save(img_byte_arr, format='JPEG', quality=85)
+        img_byte_arr = img_byte_arr.getvalue()
 
         user = User.query.filter_by(username=username).first()
         if not user:
@@ -185,6 +204,7 @@ def analyze():
         
         new_analysis = Analysis(
             image_name=file.filename,
+            image_data=img_byte_arr,
             confidence=confidence,
             patient=user,
             location=bp,
@@ -203,6 +223,9 @@ def analyze():
         return f'''
         <div style="font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px;">
             <h1 style="color: {color};">Результат: {full_text}</h1>
+            <div style="text-align: center; margin: 20px 0;">
+                <img src="/image/{new_analysis.id}" style="max-width: 300px; border-radius: 8px; border: 2px solid {color};">
+            </div>
             <p><strong>Впевненість:</strong> {confidence:.2f}%</p>
             <p><strong>Пацієнт:</strong> {username}</p>
             <hr>
@@ -216,19 +239,37 @@ def analyze():
     except Exception as e:
         return f"Помилка обробки: {str(e)}"
 
+@app.route('/image/<int:analysis_id>')
+def get_image(analysis_id):
+    analysis = Analysis.query.get_or_404(analysis_id)
+    if analysis.image_data:
+        return send_file(
+            io.BytesIO(analysis.image_data),
+            mimetype='image/jpeg',
+            as_attachment=False,
+            download_name=analysis.image_name
+        )
+    else:
+        return "Зображення не знайдено", 404
+
 @app.route('/view-data')
 def view_data():
     analyses = Analysis.query.order_by(Analysis.timestamp.desc()).all()
     
     html = '''
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 20px auto; }
-        .card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        body { font-family: sans-serif; max-width: 800px; margin: 20px auto; padding: 10px; }
+        .card { border: 1px solid #ddd; padding: 15px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; gap: 20px; }
+        .card-image { flex: 0 0 150px; }
+        .card-image img { width: 150px; height: 150px; object-fit: cover; border-radius: 8px; border: 1px solid #eee; }
+        .card-content { flex: 1; }
         .danger { color: red; font-weight: bold; }
         .safe { color: green; font-weight: bold; }
+        ul { margin-top: 5px; padding-left: 20px; }
+        h3 { margin-top: 0; }
     </style>
     <h1>Історія діагностики</h1>
-    <a href="/">На головну</a><br><br>
+    <a href="/"><- На головну</a><br><br>
     '''
     
     for a in analyses:
@@ -243,15 +284,19 @@ def view_data():
 
         html += f'''
         <div class="card">
-            <h3>Зображення: {a.image_name}</h3>
-            <p><strong>Пацієнт:</strong> {a.patient.username}</p>
-            <p><strong>Локалізація:</strong> {a.location.name if a.location else 'Не вказано'}</p>
-            <hr>
-            <p><strong>Результат:</strong> <span class="{severity_color}">{d_name}</span></p>
-            <p><strong>Впевненість:</strong> {a.confidence:.2f}%</p>
-            <p><strong>Рекомендації:</strong></p>
-            <ul>{recs}</ul>
-            <small>Дата: {a.timestamp.strftime('%Y-%m-%d %H:%M')}</small>
+            <div class="card-image">
+                <img src="/image/{a.id}" alt="{a.image_name}">
+            </div>
+            <div class="card-content">
+                <h3>Результат: <span class="{severity_color}">{d_name}</span></h3>
+                <p><strong>Пацієнт:</strong> {a.patient.username}</p>
+                <p><strong>Локалізація:</strong> {a.location.name if a.location else '-'}</p>
+                <p><strong>Впевненість:</strong> {a.confidence:.1f}%</p>
+                <p><strong>Рекомендації:</strong></p>
+                <ul>{recs}</ul>
+                <small style="color: gray;">Дата: {a.timestamp.strftime('%d.%m.%Y %H:%M')}</small>
+                <br><small>Файл: {a.image_name}</small>
+            </div>
         </div>
         '''
     
@@ -286,7 +331,7 @@ def reset_db():
         db.session.commit()
         return "База даних успішно оновлена."
     except Exception as e:
-        return f"Помилка: {str(e)}"
+        return f"Error: {str(e)}"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
