@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import gc
 from flask import Flask, request, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
@@ -15,7 +16,7 @@ if database_url and database_url.startswith("postgres://"):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
 
 db = SQLAlchemy(app)
 
@@ -87,6 +88,7 @@ HOME_HTML = '''
 <html>
 <head>
     <title>AI Derma Lab</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { font-family: sans-serif; max-width: 600px; margin: 20px auto; padding: 20px; background: #f9f9f9; }
         .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
@@ -117,7 +119,7 @@ HOME_HTML = '''
                 </select>
             </div>
             <div class="form-group">
-                <label>Photo:</label>
+                <label>Photo (Max 5MB):</label>
                 <input type="file" name="file" accept="image/*" required>
             </div>
             <button type="submit">Analyze</button>
@@ -137,6 +139,8 @@ def home():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
+    gc.collect()
+    
     if model is None:
         return "<h3>Error: Model not loaded.</h3>"
 
@@ -161,6 +165,9 @@ def analyze():
         
         full_text = CLASSES[idx]
         short_name = full_text.split(' - ')[0]
+
+        del img, x, preds
+        gc.collect()
 
         user = User.query.filter_by(username=username).first()
         if not user:
