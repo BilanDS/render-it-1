@@ -92,7 +92,7 @@
 
 ---
 
-## Структура проєкту
+##  Структура проєкту
 
 ```text
 ├── .github/workflows/   # Налаштування CI/CD (GitHub Actions)
