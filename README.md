@@ -99,5 +99,4 @@
 ├── app.py               # Головний файл застосунку (Backend + Frontend)
 ├── skin_model.tflite    # Навчена модель нейромережі
 ├── requirements.txt     # Список бібліотек
-├── Procfile             # Інструкція запуску для Render
 └── README.md            # Документація
